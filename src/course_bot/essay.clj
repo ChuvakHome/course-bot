@@ -203,7 +203,7 @@
       (fn [tx {{id :id} :from}]
         (let [reviews (my-reviews tx essay-code id)]
           (doall (map #(talk/send-text token id %) reviews))
-          (talk/send-text token id (str "You received " (count reviews) (if (not= (count reviews) 1) " reviews." " review."))))
+          (talk/send-text token id (str "You received " (count reviews) (if (> (count reviews) 1) " reviews." " review."))))
         (talk/stop-talk tx)))))
 
 (defn review-score [conf essay-code]
