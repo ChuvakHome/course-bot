@@ -1,6 +1,7 @@
 (ns course-bot.essay
   (:require [course-bot.talk :as talk]
-            [course-bot.general :as general])
+            [course-bot.general :as general]
+            [course-bot.misc :as misc])
   (:require [codax.core :as codax])
   (:require [clojure.string :as str]))
 
@@ -126,7 +127,7 @@
       (fn [tx {{id :id} :from}]
         (let [assignments (stud-review-assignments tx id essay-code)]
           (when (empty? assignments)
-            (talk/send-text token id "Вам не назначено ни одно эссе. Вероятно, вы не загрузили своё вовремя или поспкешили.")
+            (talk/send-text token id "Вам не назначено ни одно эссе. Вероятно, вы не загрузили своё эссе вовремя или поспешили с отправкой ревью.")
             (talk/stop-talk tx))
           (when-not (nil? (codax/get-at tx [id :essays essay-code :my-reviews]))
             (talk/send-text token id "You already sent reviews.")
@@ -187,6 +188,7 @@
                        (codax/update-at tx' [(:essay-author review) :essays essay-code :received-review] conj review))
                      tx reviews)
              (codax/assoc-at [id :essays essay-code :my-reviews] reviews)
+             (codax/assoc-at [id :essays essay-code :my-reviews-submitted-at] (misc/str-time (misc/today)))
              talk/stop-talk))))))
 
 (defn my-reviews [tx essay-code id]
@@ -204,67 +206,29 @@
           (talk/send-text token id (str "You received " (count reviews) (if (not= (count reviews) 1) " reviews." " review."))))
         (talk/stop-talk tx)))))
 
-;; (defn essays-without-review [tx essay-code]
-;;   (->> (get-essays tx essay-code)
-;;        (filter #(-> (my-reviews tx essay-code (first %)) empty?))
-;;        (map (fn [[id info]] (hash-map :author (:name info)
-;;                                       :text (-> info :essays (get essay-code) :text)
-;;                                       :on-review (-> info :essays (get essay-code) :request-review empty? not))))))
+(defn review-score [conf essay-code]
+  (let [essay-key (keyword essay-code)]
+    (fn [_tx data id]
+      (let [n (-> data (get id) :essays (get essay-code) :my-reviews count)
+            deadline (-> conf (get essay-key) :review-deadline)
+            at (-> data (get id) :essays (get essay-code) :my-reviews-submitted-at)
+            score-per-review (cond
+                               (or (nil? deadline) (nil? at)) 1
+                               (< (misc/read-time deadline) (misc/read-time at)) 0.5
+                               :else 1)]
+        (-> (* n score-per-review)
+            str
+            (str/replace #"\." ","))))))
 
-;; (defn essays-without-review-talk [db token essay-code assert-admin]
-;;   (talk/talk db (str essay-code "missreview")
-;;              :start
-;;              (fn [tx {{id :id} :chat}]
-;;                (assert-admin tx token id)
-;;                (doall (->> (essays-without-review tx essay-code)
-;;                            (map #(do (talk/send-text token id (str (:author %) " " (:on-review %)))
-;;                                      (talk/send-text token id (:text %)))))))))
-
-;; (defn collect-report
-;;   "Example:
-
-;;   (c/with-read-transaction [db tx]
-;;      (print (essay/collect-report tx (str 'essay1))))"
-;;   [tx essay-id]
-;;   (->> (get-essays tx essay-id)
-;;        (map (fn [[id desc]]
-;;               (-> desc
-;;                   :essays
-;;                   (get essay-id)
-;;                   (#(str "====================================\n"
-;;                          "Оценка: " (->> % :received-review (map :pos) (apply +)) " (чем меньше, тем лучше)\n"
-;;                          (:text %))))))
-;;        (str/join "\n\n\n")))
-
-;; (defn drop-talk [db token essay-code assert-admin]
-;;   (talk/def-talk db (str "drop" essay-code)
-;;     :start
-;;     (fn [tx {{id :id} :from text :text}]
-;;       (assert-admin tx token id)
-;;       (let [args (talk/command-args text)]
-;;         (if (and (= (count args) 1) (re-matches #"^\d+$" (first args)))
-;;           (let [stud-id (Integer/parseInt (first args))
-;;                 stud (codax/get-at tx [stud-id])]
-;;             (when (nil? (:name stud))
-;;               (talk/send-text token id "User with specific telegram id not found.")
-;;               (talk/stop-talk tx))
-;;             (general/send-whoami tx token id stud-id)
-;;             (talk/send-yes-no-kbd token id (str "Drop essay " essay-code " for this student?"))
-;;             (-> tx
-;;                 (talk/change-branch :approve {:stud-id stud-id})))
-;;           (do
-;;             (talk/send-text token id (str "Wrong input. Expect: /drop" essay-code " 12345"))
-;;             (talk/stop-talk tx)))))
-
-;;     :approve
-;;     (fn [tx {{id :id} :from text :text} {stud-id :stud-id}]
-;;       (cond
-;;         (= text "yes") (do (talk/send-text token id (str "Essay dropped: " stud-id))
-;;                            (talk/send-text token stud-id (str "Essay dropped, you can resubmit it by /" essay-code))
-;;                            (-> tx
-;;                                (codax/assoc-at [stud-id :essays essay-code] nil)
-;;                                (talk/stop-talk)))
-;;         (= text "no") (do (talk/send-text token id "Not dropped.")
-;;                           (talk/stop-talk tx))
-;;         :else (do (talk/send-text token id "Please yes or no?")
-;;                   (talk/repeat-branch tx))))))
+(defn essay-score "hardcoded: rank + 1" [conf essay-code]
+  (fn [_tx data id]
+    (let [reviews (-> data (get id) :essays (get essay-code) :received-review)
+          scores (->> reviews (map :rank))]
+      (if (empty? scores)
+        "x"
+        (-> (/ (apply + scores) (count scores))
+            float
+            Math/round
+            (#(- 4 %)) ; 3 (max score) = 4 - 1; 1 (min score) = 4 - 3
+            (+ 1) ; + 1 to get actual score
+            )))))

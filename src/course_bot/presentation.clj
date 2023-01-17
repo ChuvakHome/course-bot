@@ -1,5 +1,6 @@
  (ns course-bot.presentation
-   (:require [clojure.string :as str])
+   (:require [clojure.java.io :as io]
+             [clojure.string :as str])
    (:require [codax.core :as codax])
    (:require [course-bot.talk :as talk]
              [course-bot.general :as general]
@@ -41,6 +42,15 @@
 (defn report-presentation-group [pres-key-name]
   (fn [_tx data id]
     (-> data (get id) :presentation (get (keyword pres-key-name)) :group)))
+
+(defn report-presentation-classes [pres-key-name]
+  (fn [_tx data id]
+    (let [pres-key (keyword pres-key-name)
+          group (-> data (get id) :presentation (get pres-key) :group)
+          lessons (-> data :presentation (get pres-key) (get group))]
+      (->> lessons
+           (filter (fn [[_k v]] (-> v :stud-ids empty? not)))
+           count))))
 
 (defn submit-talk [db {token :token :as conf} pres-key-name]
   (let [cmd (str pres-key-name "submit")
@@ -97,8 +107,7 @@
   (->> (codax/get-at tx [])
        (filter (fn [[_id info]]
                  (and (some-> info :presentation (get pres-key) :on-review?)
-                      (not (some-> info :presentation (get pres-key) :approved?)))))
-       ))
+                      (not (some-> info :presentation (get pres-key) :approved?)))))))
 
 (defn topic [desc] (if (nil? desc) "nil" (-> desc str/split-lines first)))
 
@@ -124,6 +133,7 @@
             (map #(str "- " (-> % second :presentation (get pres-key) :description topic)
                        " (" (-> % second :name) ") - "
                        (cond
+                         (-> % second :presentation (get pres-key) :scheduled?) "SCHEDULED"
                          (-> % second :presentation (get pres-key) :on-review?) "ON-REVIEW"
                          (-> % second :presentation (get pres-key) :approved?) "APPROVED"
                          :else "REJECTED")))
@@ -493,25 +503,29 @@
       (let [avg (/ (->> ranks (map :rank) (apply +)) (count ranks))]
         (Double/parseDouble (format "%.2f" (double avg)))))))
 
-(defn score [tx conf pres-key stud-id]
-  "by the configuration"
-  (let [scores (-> conf (get pres-key) :feedback-scores)
+(defn score "by the configuration" [tx conf pres-key stud-id]
+  (let [all-scores (-> conf (get pres-key) :feedback-scores)
         group (codax/get-at tx [stud-id :presentation pres-key :group])
-        feedback (some
-                  (fn [[_dt fb]] (when (some #(= % stud-id) (:stud-ids fb)) fb))
-                  (codax/get-at tx [:presentation pres-key group]))]
-    (when (and (some? group) (some? feedback))
-      (let [stud-ids (-> feedback :stud-ids)
-            ranks (->> stud-ids
+
+        {stud-ids :stud-ids feedback :feedback}
+        (some
+         (fn [[_dt fb]] (when (some #(= % stud-id) (:stud-ids fb)) fb))
+         (codax/get-at tx [:presentation pres-key group]))
+        scores (get all-scores (count stud-ids))]
+    (cond
+      (or (empty? stud-ids) (nil? group)) nil
+
+      (empty? feedback) (->> (map vector (sort stud-ids) scores)
+                             (some (fn [[id score]] (when (= stud-id id) score))))
+      (some? feedback)
+      (let [ranks (->> stud-ids
                        (map (fn [id] {:stud-id id
                                       :avg-rank (avg-rank tx pres-key id)}))
                        (sort-by :avg-rank)
                        (map-indexed (fn [idx rank] (assoc rank :rank (+ 1 idx)))))
 
             rank (some #(when (= stud-id (:stud-id %)) (:rank %)) ranks)]
-        (-> scores
-            (get (count ranks))
-            (nth (- rank 1)))))))
+        (-> scores (nth (- rank 1)))))))
 
 (defn report-presentation-avg-rank [conf pres-key-name]
   (fn [tx _data id]
@@ -522,3 +536,39 @@
 (defn report-presentation-score [conf pres-key-name]
   (fn [tx _data id]
     (score tx conf (keyword pres-key-name) id)))
+
+(defn lesson-count [pres-name]
+  (fn [_tx data id]
+    (let [pres-key (keyword pres-name)
+          group (-> data (get id) :presentation (get pres-key) :group)
+          schedule (-> data :presentation (get pres-key) (get group))]
+      (->> schedule
+           (filter #(-> % second :stud-ids empty? not))
+           count))))
+
+(defn scheduled-descriptions-dump [data pres-key group]
+  (->> data
+       (filter #(and (-> % second :presentation (get pres-key) :group (= group))
+                     (-> % second :presentation (get pres-key) :scheduled?)))
+       (map #(let [name (-> % second :name)
+                   desc (-> % second :presentation (get pres-key) :description)]
+               (str "## " name "\n\n" desc)))
+       (str/join "\n\n")))
+
+(defn all-scheduled-descriptions-dump-talk [db {token :token :as conf} pres-id]
+  (let [pres-key (keyword pres-id)]
+    (talk/def-command db (str pres-id "descriptions") "all-scheduled-descriptions-dump (admin only)"
+      (fn [tx {{id :id} :from}]
+        (general/assert-admin tx conf id)
+
+        (talk/send-text token id "File with all scheduled descriptions by groups:")
+        (let [dt (.format (java.text.SimpleDateFormat. "yyyy-MM-dd-HH-mm-Z") (misc/today))
+              fn (str dt "-" pres-id "-descriptions.md")
+              groups (-> conf (get pres-key) :groups keys)
+              data (codax/get-at tx [])
+              text (->> groups
+                        (map #(str "# " % "\n\n" (scheduled-descriptions-dump data pres-key %)))
+                        (str/join "\n\n\n"))]
+          (spit fn text)
+          (talk/send-document token id (io/file fn)))
+        tx))))

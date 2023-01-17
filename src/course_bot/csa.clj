@@ -36,6 +36,7 @@
   (pres/feedback-talk db conf "lab1")
   (pres/drop-talk db conf "lab1" false)
   (pres/drop-talk db conf "lab1" true)
+  (pres/all-scheduled-descriptions-dump-talk db conf "lab1")
 
   (essay/submit-talk db conf "essay1")
   (essay/status-talk db conf "essay1")
@@ -49,6 +50,12 @@
   (essay/review-talk db conf "essay2")
   (essay/myfeedback-talk db conf "essay2")
 
+  (essay/submit-talk db conf "essay3")
+  (essay/status-talk db conf "essay3")
+  (essay/assignreviewers-talk db conf "essay3")
+  (essay/review-talk db conf "essay3")
+  (essay/myfeedback-talk db conf "essay3")
+
   (quiz/startquiz-talk db conf)
   (quiz/stopquiz-talk db conf)
   (quiz/quiz-talk db conf)
@@ -59,7 +66,16 @@
                       "group" report/stud-group
                       "lab1-group" (pres/report-presentation-group "lab1")
                       "lab1-rank" (pres/report-presentation-avg-rank conf "lab1")
-                      "lab1-score" (pres/report-presentation-score conf "lab1"))
+                      "lab1-score" (pres/report-presentation-score conf "lab1")
+                      "lab1-count" (pres/lesson-count "lab1")
+                      "failed-tests" (quiz/fail-tests conf)
+                      "success-test-percent" (quiz/success-tests-percent conf)
+                      "essay1" (essay/essay-score conf "essay1")
+                      "essay1-reviews" (essay/review-score conf "essay1")
+                      "essay2" (essay/essay-score conf "essay2")
+                      "essay2-reviews" (essay/review-score conf "essay2")
+                      "essay3" (essay/essay-score conf "essay3")
+                      "essay3-reviews" (essay/review-score conf "essay3"))
 
   (handlers/command "help" {{id :id} :chat} (talk/send-text (-> conf :token) id (talk/helps)))
 

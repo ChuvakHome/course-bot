@@ -278,6 +278,7 @@
         schedule-talk (ttalk/mock-talk pres/schedule-talk db conf "lab1")
         agenda-talk (ttalk/mock-talk pres/agenda-talk db conf "lab1")
         soon-talk (ttalk/mock-talk pres/soon-talk db conf "lab1")
+        all-scheduled-descriptions-dump-talk (ttalk/mock-talk pres/all-scheduled-descriptions-dump-talk db conf "lab1")
         drop-talk (ttalk/mock-talk pres/drop-talk db conf "lab1" false)
         dropall-talk (ttalk/mock-talk pres/drop-talk db conf "lab1" true)]
 
@@ -343,6 +344,12 @@
         (schedule-talk 2 "2022.01.01 12:00 +0000")
         (ttalk/in-history *chat 2 "OK, you can check it by: /lab1agenda")
 
+        (submissions-talk 2 "/lab1submissions")
+        (ttalk/in-history *chat 2
+                          (str/join "\n" '("Submitted presentation in 'lgr1':"
+                                           "- pres 1 (Alice) - APPROVED"
+                                           "- pres 2 (Bob) - SCHEDULED")))
+
         (testing "try-to-schedule-again"
           (schedule-talk 2 "/lab1schedule")
           (ttalk/in-history *chat 2 "Already scheduled, check /lab1agenda."))
@@ -393,6 +400,17 @@
                             (str/join "\n" '("Agenda 2022.01.02 12:00 +0000 (lgr1), ABC:"
                                              "1. pres 1 (Alice)"))
                             "Agenda 2022.02.02 12:00 +0000 (lgr2):\n"))))
+
+    (all-scheduled-descriptions-dump-talk 0 "/lab1descriptions")
+    (ttalk/in-history *chat
+                      [0 "File with all scheduled descriptions by groups:"]
+                      [0
+                       "# lgr1\n"
+                       "## Alice\n"
+                       "pres 1\n"
+                       "## Bob\n"
+                       "pres 2\n\n"
+                       "# lgr2\n\n"])
 
     (testing "soon-talk"
       (with-redefs [misc/today (fn [] (misc/read-time "2022.01.01 11:30 +0000"))]
@@ -519,7 +537,9 @@
                                      "ID" report/stud-id
                                      "pres-group" (pres/report-presentation-group "lab1")
                                      "feedback-avg" (pres/report-presentation-avg-rank conf "lab1")
-                                     "feedback" (pres/report-presentation-score conf "lab1"))]
+                                     "feedback" (pres/report-presentation-score conf "lab1")
+                                     "classes" (pres/report-presentation-classes "lab1")
+                                     "lesson-counter" (pres/lesson-count "lab1"))]
     (register-user *chat start-talk 1 "Alice")
     (setgroup-talk 1 "/lab1setgroup")
     (setgroup-talk 1 "lgr1")
@@ -565,6 +585,15 @@
 
     (is (= {:lab1 {"lgr1" {"2022.01.01 12:00 +0000" {:stud-ids '(2 1)}}}}
            (codax/get-at! db [:presentation])))
+
+    (testing "report without feedback"
+      (report-talk 0 "/report")
+      (ttalk/match-csv *chat 0
+                       ["ID" "pres-group" "feedback-avg" "feedback" "classes" "lesson-counter"]
+                       ["0" "" "" "" "0" "0"]
+                       ["1" "lgr1" "" "4" "1" "1"]
+                       ["2" "lgr1" "" "2" "1" "1"]
+                       ["3" "lgr1" "" "" "1" "1"]))
 
     (with-redefs [misc/today (fn [] (misc/read-time "2022.01.01 11:29 +0000"))]
       (feedback-talk 1 "/lab1feedback")
@@ -622,13 +651,13 @@
 
       (testing "report"
         (report-talk 0 "/report")
-        (ttalk/in-history *chat [0
-                                 "ID;pres-group;feedback-avg;feedback"
-                                 "0;;;"
-                                 "1;lgr1;1,5;2"
-                                 "2;lgr1;1,5;4"
-                                 "3;lgr1;;"
-                                 "4;;;\n"]))
+        (ttalk/match-csv *chat 0
+                         ["ID" "pres-group" "feedback-avg" "feedback" "classes" "lesson-counter"]
+                         ["0" "" "" "" "0" "0"]
+                         ["1" "lgr1" "1,5" "2" "1" "1"]
+                         ["2" "lgr1" "1,5" "4" "1" "1"]
+                         ["3" "lgr1" "" "" "1" "1"]
+                         ["4" "" "" "" "0" "0"]))
 
       (with-redefs [misc/today (fn [] (misc/read-time "2022.01.01 12:30 +0000"))]
         (feedback-talk 3 "/lab1feedback")
@@ -665,10 +694,10 @@
 
     (testing "report"
       (report-talk 0 "/report")
-      (ttalk/in-history *chat [0
-                               "ID;pres-group;feedback-avg;feedback"
-                               "0;;;"
-                               "1;lgr1;1,33;4"
-                               "2;lgr1;1,67;2"
-                               "3;lgr1;;"
-                               "4;;;\n"]))))
+      (ttalk/match-csv *chat 0
+                       ["ID" "pres-group" "feedback-avg" "feedback" "classes" "lesson-counter"]
+                       ["0" "" "" "" "0" "0"]
+                       ["1" "lgr1" "1,33" "4" "1" "1"]
+                       ["2" "lgr1" "1,67" "2" "1" "1"]
+                       ["3" "lgr1" "" "" "1" "1"]
+                       ["4" "" "" "" "0" "0"]))))
